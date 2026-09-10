@@ -3,7 +3,6 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import pandas as pd
 import time
-import seaborn as sns
 
 # --- 1. PAGE CONFIGURATION & ANIMATED CSS ---
 st.set_page_config(page_title="Neon Floyd-Warshall", layout="wide", initial_sidebar_state="collapsed")
@@ -11,7 +10,7 @@ st.set_page_config(page_title="Neon Floyd-Warshall", layout="wide", initial_side
 # Injecting CSS for Cyber Aesthetics
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;600;700&display=swap');
 
     /* Global App Background */
     .stApp {
@@ -41,7 +40,7 @@ st.markdown("""
     .stButton>button {
         background: linear-gradient(135deg, #ff0844 0%, #ff4b2b 100%);
         border: none;
-        color: white;
+        color: white !important;
         font-family: 'Orbitron', sans-serif;
         font-weight: 700;
         font-size: 18px;
@@ -97,8 +96,6 @@ with col_hero1:
     Unlike single-source approaches, this workflow systematically updates an $N \\times N$ distance matrix over $N$ dynamic iterations, processing every potential route concurrently to build a complete transit map.
     """)
     st.write("")
-    st.subheader("The Matrix Recurrence Relation")
-    st.latex(r"D^{(k)}[i][j] = \min \left( D^{(k-1)}[i][j], \; D^{(k-1)}[i][k] + D^{(k-1)}[k][j] \right)")
 
 with col_hero2:
     st.subheader("Complexity Metrics")
@@ -113,54 +110,111 @@ with col_hero2:
 
 st.markdown("---")
 
-# --- 4. SECTION 2: SYSTEM APPLICATIONS ---
-st.title("🛰️ Real-World System Implementations")
+# --- 4. SECTION 2: INTERACTIVE INPUT SECTION ---
+st.title("🛠️ Configure Network Topology")
+st.write(
+    "Construct your own disaster transit grid. You can either use the **Input Form** below to configure specific routes, or directly click and edit the **Data Matrix**. Use `INF` for routes that are completely destroyed.")
+
+# State management for the matrix size
+num_nodes = st.slider("Select Number of Locations (Nodes)", min_value=3, max_value=8, value=4)
+
+if 'matrix_size' not in st.session_state or st.session_state.matrix_size != num_nodes:
+    # Generate default matrix populated with 'INF' and 0 on the diagonal
+    default_matrix = [['INF' for _ in range(num_nodes)] for _ in range(num_nodes)]
+    for i in range(num_nodes):
+        default_matrix[i][i] = '0'
+
+    # Prefill some interesting paths if size is 4 for demonstration purposes
+    if num_nodes == 4:
+        default_matrix[0][1] = '3'
+        default_matrix[0][3] = '7'
+        default_matrix[1][0] = '8'
+        default_matrix[1][2] = '2'
+        default_matrix[2][0] = '5'
+        default_matrix[2][3] = '1'
+        default_matrix[3][0] = '2'
+
+    st.session_state.matrix_data = default_matrix
+    st.session_state.matrix_size = num_nodes
+
 st.write("")
+col_form, col_matrix = st.columns([1, 1.5])
 
-col_app1, col_app2, col_app3 = st.columns(3)
+with col_form:
+    st.markdown("<h3 style='font-size: 20px;'>📝 Quick Input Form</h3>", unsafe_allow_html=True)
+    st.write("Target specific nodes to update their route cost.")
 
-with col_app1:
-    st.markdown("<h3 style='font-size: 20px;'>🌐 Network Routing Protocols</h3>", unsafe_allow_html=True)
-    st.write("""
-    Used in link-state protocols (like OSPF) to compute optimal transmission tables across server clusters, instantly adapting to downed subnets.
-    """)
+    c1, c2 = st.columns(2)
+    with c1:
+        u = st.number_input("Source Node (From)", min_value=0, max_value=num_nodes - 1, value=0, step=1)
+    with c2:
+        v = st.number_input("Target Node (To)", min_value=0, max_value=num_nodes - 1, value=1 if num_nodes > 1 else 0,
+                            step=1)
 
-with col_app2:
-    st.markdown("<h3 style='font-size: 20px;'>🗺️ Trans-GIS & Logistics</h3>", unsafe_allow_html=True)
-    st.write("""
-    Powers pre-calculated distance matrices in multi-stop logistics networks, ensuring supply chain resilience when primary routes are blocked.
-    """)
+    w = st.text_input("Transit Time / Cost", value="5", help="Enter a number, or type 'INF' if the route is broken.")
 
-with col_app3:
-    st.markdown("<h3 style='font-size: 20px;'>🧬 Risk Scoring Engines</h3>", unsafe_allow_html=True)
-    st.write("""
-    Adapted to map the transitive closure of networks, allowing cybersecurity models to trace all possible pathways an attacker might take through a system.
-    """)
+    # Button to apply form inputs
+    if st.button("➕ Apply Route Update"):
+        st.session_state.matrix_data[u][v] = str(w).strip().upper()
+        # Safe rerun trigger compatible across Streamlit versions
+        if hasattr(st, 'rerun'):
+            st.rerun()
+        else:
+            st.experimental_rerun()
+
+with col_matrix:
+    st.markdown("<h3 style='font-size: 20px;'>📊 Direct Matrix Editor</h3>", unsafe_allow_html=True)
+    st.write("Click inside any cell below to directly modify the grid.")
+    # Create a DataFrame for the st.data_editor
+    df_input = pd.DataFrame(st.session_state.matrix_data,
+                            columns=[f"N-{i}" for i in range(num_nodes)],
+                            index=[f"N-{i}" for i in range(num_nodes)])
+
+    # The interactive data editor
+    edited_df = st.data_editor(df_input, use_container_width=True)
+
+    # Sync direct matrix edits back to session state so they aren't lost
+    st.session_state.matrix_data = edited_df.values.tolist()
+
+# Parse the dynamically updated matrix into float types for the algorithm
+INF = float('inf')
+custom_matrix = []
+try:
+    for i in range(num_nodes):
+        row = []
+        for j in range(num_nodes):
+            val = str(st.session_state.matrix_data[i][j]).strip().upper()
+            if val == 'INF' or val == 'NAN' or val == '':
+                row.append(INF)
+            else:
+                row.append(float(val))
+        custom_matrix.append(row)
+except ValueError:
+    st.error("⚠️ Invalid input detected! Please enter numbers or 'INF' only.")
+    st.stop()
 
 st.markdown("---")
 
-# --- 5. SECTION 3: INTERACTIVE TERMINAL & GRAPH ANIMATION ---
+# --- 5. ANIMATION & DASHBOARD SECTION ---
 st.title("🎛️ Live Calculation Terminal")
 
-INF = float('inf')
-NUM_NODES = 4
 
-# Initialize default weighted directed matrix (Grid mapping)
-initial_matrix = [
-    [0, 3, INF, 7],
-    [8, 0, 2, INF],
-    [5, INF, 0, 1],
-    [2, INF, INF, 0]
-]
-
-
-def style_matrix(matrix):
+def style_matrix(matrix, n):
     """Converts matrix to DataFrame with cyberpunk dark theme styling."""
     df = pd.DataFrame(matrix,
-                      columns=[f"N-{i}" for i in range(NUM_NODES)],
-                      index=[f"N-{i}" for i in range(NUM_NODES)])
+                      columns=[f"N-{i}" for i in range(n)],
+                      index=[f"N-{i}" for i in range(n)])
 
     display_df = df.replace(INF, "∞")
+
+    # Format floats to not show .0 if they are whole numbers
+    # Safely handles Pandas API changes (applymap is removed in newer versions)
+    format_func = lambda x: int(x) if isinstance(x, float) and x.is_integer() else x
+
+    if hasattr(display_df, 'map'):
+        display_df = display_df.map(format_func)
+    else:
+        display_df = display_df.applymap(format_func)
 
     styles = [
         dict(selector="th", props=[("font-size", "14px"), ("text-align", "center"), ("background-color", "#0f172a"),
@@ -173,18 +227,18 @@ def style_matrix(matrix):
     return display_df.style.set_table_styles(styles).set_properties(**{'background-color': '#090d16'})
 
 
-def draw_graph(matrix, current_k=None, update_ij=None):
+def draw_graph(matrix, n, current_k=None, update_ij=None):
     """Generates a high-contrast dark mode network visualization."""
     plt.style.use('dark_background')
 
     G = nx.DiGraph()
-    for i in range(NUM_NODES):
+    for i in range(n):
         G.add_node(i)
 
-    for i in range(NUM_NODES):
-        for j in range(NUM_NODES):
+    for i in range(n):
+        for j in range(n):
             if i != j and matrix[i][j] != INF:
-                G.add_edge(i, j, weight=matrix[i][j])
+                G.add_edge(i, j, weight=int(matrix[i][j]) if matrix[i][j].is_integer() else matrix[i][j])
 
     pos = nx.circular_layout(G)
     fig, ax = plt.subplots(figsize=(6, 4.5))
@@ -194,8 +248,8 @@ def draw_graph(matrix, current_k=None, update_ij=None):
     ax.set_facecolor('#090d16')
 
     # Active node highlighted in glowing hot pink
-    node_colors = ['#00f2fe'] * NUM_NODES
-    node_edge_colors = ['#007a80'] * NUM_NODES
+    node_colors = ['#00f2fe'] * n
+    node_edge_colors = ['#007a80'] * n
     if current_k is not None:
         node_colors[current_k] = '#ff0844'
         node_edge_colors[current_k] = '#ffb199'
@@ -203,7 +257,7 @@ def draw_graph(matrix, current_k=None, update_ij=None):
     nx.draw_networkx_nodes(G, pos, ax=ax, node_color=node_colors,
                            edgecolors=node_edge_colors, linewidths=3, node_size=1100)
 
-    labels = {i: f"N-{i}" for i in range(NUM_NODES)}
+    labels = {i: f"N-{i}" for i in range(n)}
     nx.draw_networkx_labels(G, pos, labels, ax=ax, font_color='#090d16', font_weight='bold', font_family='sans-serif')
 
     # Highlight newly discovered path in glowing bright green
@@ -232,48 +286,80 @@ def draw_graph(matrix, current_k=None, update_ij=None):
     return fig
 
 
-# Dashboard Columns
+# Dashboard Columns Setup
 col_graph, col_matrix = st.columns([1.2, 1])
 
 with col_graph:
     st.markdown("<h3 style='text-align: center; font-size: 18px;'>Disaster Grid Topology</h3>", unsafe_allow_html=True)
     graph_placeholder = st.empty()
-    graph_placeholder.pyplot(draw_graph(initial_matrix))
+    graph_placeholder.pyplot(draw_graph(custom_matrix, num_nodes))
 
 with col_matrix:
     st.markdown("<h3 style='text-align: center; font-size: 18px;'>Dynamic Distance Matrix</h3>", unsafe_allow_html=True)
     matrix_placeholder = st.empty()
-    matrix_placeholder.markdown(style_matrix(initial_matrix).to_html(), unsafe_allow_html=True)
+    matrix_placeholder.markdown(style_matrix(custom_matrix, num_nodes).to_html(), unsafe_allow_html=True)
     st.write("")
     status_text = st.empty()
 
 st.write("")
 
-# Animation Trigger Button
-if st.button("INITIATE ROUTING OVERRIDE"):
-    dist = [row[:] for row in initial_matrix]
+# --- 6. ANIMATION EXECUTION ---
+if st.button("INITIATE ROUTING OVERRIDE (RUN ANIMATION)", use_container_width=True):
+    dist = [row[:] for row in custom_matrix]
 
-    for k in range(NUM_NODES):
-        for i in range(NUM_NODES):
-            for j in range(NUM_NODES):
+    # Track if any optimizations actually happened
+    optimizations_found = False
+
+    for k in range(num_nodes):
+        for i in range(num_nodes):
+            for j in range(num_nodes):
 
                 if dist[i][k] != INF and dist[k][j] != INF and dist[i][k] + dist[k][j] < dist[i][j]:
+                    optimizations_found = True
                     old_dist = dist[i][j]
                     dist[i][j] = dist[i][k] + dist[k][j]
 
                     old_val_str = "∞" if old_dist == INF else str(old_dist)
+
+                    # Format for display (removes .0 if whole number)
+                    new_val_display = int(dist[i][j]) if float(dist[i][j]).is_integer() else dist[i][j]
+
                     status_text.info(
-                        f"**Optimization:** Node N-{k} bridges N-{i} ➔ N-{j}. Transit cost reduced from {old_val_str} to **{dist[i][j]}**.")
+                        f"**Optimization:** Routing via Node **N-{k}** bridges **N-{i}** ➔ **N-{j}**.\nTransit cost reduced from **{old_val_str}** to **{new_val_display}**.")
 
-                    fig = draw_graph(dist, current_k=k, update_ij=(i, j))
+                    # Redraw Visuals
+                    fig = draw_graph(dist, num_nodes, current_k=k, update_ij=(i, j))
                     graph_placeholder.pyplot(fig)
-                    matrix_placeholder.markdown(style_matrix(dist).to_html(), unsafe_allow_html=True)
+                    matrix_placeholder.markdown(style_matrix(dist, num_nodes).to_html(), unsafe_allow_html=True)
 
-                    time.sleep(1.4)
+                    time.sleep(1.2)  # Animation speed
 
-    status_text.success("SYSTEM ONLINE: All emergency optimal routes successfully mapped.")
-    st.balloons()
-
-    fig = draw_graph(dist)
+    # Final Redraw (removes colored highlights)
+    fig = draw_graph(dist, num_nodes)
     graph_placeholder.pyplot(fig)
-    matrix_placeholder.markdown(style_matrix(dist).to_html(), unsafe_allow_html=True)
+    matrix_placeholder.markdown(style_matrix(dist, num_nodes).to_html(), unsafe_allow_html=True)
+
+    # Check for negative weight cycles
+    negative_cycle = any(dist[i][i] < 0 for i in range(num_nodes))
+
+    if negative_cycle:
+        status_text.error(
+            "🚨 CRITICAL ALERT: Negative weight cycle detected! The routing grid contains an infinite feedback loop.")
+    elif not optimizations_found:
+        status_text.warning(
+            "SYSTEM ONLINE: Routing scan complete. The inputted grid was already fully optimized; no faster alternative routes were found.")
+    else:
+        status_text.success("✅ SYSTEM ONLINE: All emergency optimal routes successfully mapped.")
+        st.balloons()
+
+    # --- 7. FINAL OUTPUT SECTION ---
+    st.markdown("---")
+    st.markdown("<h2 style='text-align: center; color: #00ffcc;'>🏁 Final Output: Optimized Shortest Path Matrix</h2>",
+                unsafe_allow_html=True)
+    st.write(
+        "Below is the completed **All-Pairs Shortest Path Matrix**. You can use this matrix to instantly look up the absolute fastest transit time from any source row to any destination column.")
+
+    # Render final matrix in a centered layout
+    col_empty1, col_final, col_empty3 = st.columns([1, 2, 1])
+    with col_final:
+        st.markdown(style_matrix(dist, num_nodes).to_html(), unsafe_allow_html=True)
